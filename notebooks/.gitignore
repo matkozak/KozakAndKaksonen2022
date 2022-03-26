@@ -38,6 +38,7 @@ vignettes/*.pdf
 # R Environment Variables
 .Renviron
 
-# generated figures
+# generated figures and knitted HTMLs
 *.pdf
+*.html
 
