@@ -11,5 +11,4 @@ background correction ROI. Follows the classic normalization procedure and fit
 as described in Phair, R. D., Gorski, S. A., & Misteli, T. (2004). Measurement
 of dynamic protein binding to chromatin in vivo, using photobleaching
 microscopy. *Methods in Enzymology*, 375, 393–414.
-[doi:10.1016/s0076-6879(03)75025-3](https://doi.org/10.1016/s0076-6879(03\)75025-3)
-
+https://doi.org/10.1016/s0076-6879(03\)75025-3)
