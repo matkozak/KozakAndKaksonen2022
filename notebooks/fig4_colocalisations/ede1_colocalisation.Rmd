@@ -1,0 +1,188 @@
+---
+title: "Percentage of colocalizing mCherry-tagged proteins with Ede1-EGFP nuages in 3∆ background"
+date: "Last compiled on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE,
+                      dpi = 96, fig.width = 6, fig.height = 4)
+```
+
+```{r libs}
+library(tidyverse)
+library(Hmisc) # mean_sdl and binomial confs
+library(ggbeeswarm)
+```
+
+# {.tabset .tabset-pills}
+
+## Experiment
+
+
+### Rationale
+
+The aim of the experiment 
+was to determine whether mCherry-tagged endocytic proteins
+co-localize with Ede1-EGFP marked droplets
+in *apl3∆ yap1801∆ yap1802∆* yeast cells. 
+
+### Imaging and analysis
+
+Two-color single planes were
+acquired on the Olympus IX81
+equipped with a 100x/1.49 objective.
+
+Measuring colocalization by correlation
+did not prove not very useful when applied to entire cells,
+since all endocytic proteins 
+are correlated in intensity in major regions
+(background, cytoplasm and genuine endocytic patches).
+
+I decided that a manual assessment would be more trustworthy.
+Regions of interest containing Ede1-EGFP droplets
+were cropped out of both channel images
+based *only* on the examination of the GFP channel.
+I used the ImageJ macro `blindAnalysis` to sequentially display all images
+at random, blinding me to the strain of origin,
+and recording a binary decision about colocalization
+for each image.
+
+### Strain list
+
+```{r strains}
+strains <- read_csv("data/raw/strain_lut.csv", 
+                    col_types = cols(target  = col_factor(NULL))) # order factor levels per csv file
+knitr::kable(strains)
+```
+
+## Results {.tabset}
+
+```{r source_data, cache=TRUE}
+files <- list.files(path = 'data/raw/', pattern = 'dataset',
+                    full.names = TRUE)
+counts <- map(files, read_csv,
+              col_names = c('cell', 'colocalizes', 'dataset'),
+              cols(dataset = col_factor(NULL))) %>%
+          bind_rows() %>% # combine datasets
+          separate(cell, c('date', 'strain', 'stack', 
+                   'channel', 'processing', 'window'), '_') %>%
+          left_join(strains, by = 'strain') %>%
+          select(strain, stack, window, target, colocalizes, dataset)
+
+write_excel_csv(format.data.frame(counts, digits = 3), 'data/colocalisation_data.csv')
+save(counts, file = 'data/colocalisation_data.RData')
+rm(list = ls()) # clean workspace
+```
+
+### Individual datasets
+
+Percentage of colocalizing condensate for each target protein in each dataset.
+
+x: number of colocalisations,
+n: total number of analyzed condensates,
+p: x / n, 
+p_min and p_max: estimates of binomial confidence interval
+based on sample size, by Wilson's method.
+
+```{r load}
+load('data/colocalisation_data.RData')
+```
+
+```{r individual_datasets}
+proc <- counts %>%
+  group_by(target, dataset) %>%
+  summarise(x = sum(colocalizes), n = n(),
+            p = binconf(x, n, method = 'wilson')[1],
+            p_min = binconf(x, n, method = 'wilson')[2],
+            p_max = binconf(x, n, method = 'wilson')[3])
+
+knitr::kable(proc)
+
+write_excel_csv(format.data.frame(proc, digits = 3), 'data/colocalisation_summary.csv')
+```
+
+### Averaged datasets
+
+Percentage of colocalizing condensates for each target protein,
+arithmetic mean ± SD from 3 datasets.
+
+```{r averaged_datasets}
+proc_stats <- proc %>%
+  select(target, dataset, p) %>%
+  group_by(target) %>%
+  summarise(mean = mean(p), sd = sd(p), n = n())
+
+knitr::kable(proc_stats)
+```
+
+## Plot {.active}
+
+```{r}
+theme_frap <- function(base_size = 11, base_family = "",
+                       base_line_size = base_size / 22,
+                       base_rect_size = base_size / 22) {
+  # minimal theme with border
+  # based on theme_linedraw without the grid lines
+  # also trying to remove all backgrounds but plot_background won't set to blank
+  theme_linedraw(
+    base_size = base_size,
+    base_family = base_family,
+    base_line_size = base_line_size,
+    base_rect_size = base_rect_size
+  ) %+replace%
+    theme(
+      # no grid and no backgrounds if I can help it
+      plot.background = element_blank(),
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      plot.margin = margin(0, 0, 0, 0),
+      complete = TRUE
+    )
+}
+
+myplot <- proc %>% ggplot(aes(x = target, y = p)) + 
+  geom_quasirandom(aes(shape = dataset), fill = 'gray80',
+              size = 2, width = 0.3, show.legend = FALSE)+
+  stat_summary(fun.y = mean, geom = "errorbar", 
+               aes(ymax = ..y.., ymin = ..y..),
+               width = 0.5, size = 1)+
+  stat_summary(fun.data = 'mean_sdl', geom = 'errorbar',
+               fun.args = list(mult = 1), width = 0.2)+
+  #scale_color_brewer(palette = 'Set2')+
+  scale_shape_manual(values = c(21:25))+ # points with borders
+  theme_frap(base_size = 18, base_family = "Myriad Pro")+
+  scale_y_continuous(labels = scales::label_percent(suffix = ''))+
+  theme(legend.position = c(0.95, 0.95),
+        legend.justification = c("right", "top"),
+        legend.background = element_rect(fill = NULL, colour = 'black',
+                                         size = 0.5))+
+  labs(title = NULL,
+       y = 'Fraction of colocalizing condensates (%)',
+       x = 'Target protein')
+
+print(myplot)
+ggsave('figures/colocalizations.pdf', device = cairo_pdf, width = 160, height = 120, units = "mm")
+```
+
+## Source data
+
+### .csv
+
+```{r echo=FALSE}
+xfun::embed_file('data/colocalisation_data.csv')
+```
+
+### .RData
+
+```{r echo=FALSE}
+xfun::embed_file('data/colocalisation_data.RData')
+```
+
+## Session info
+
+```{r session, message=TRUE}
+sessionInfo()
+```

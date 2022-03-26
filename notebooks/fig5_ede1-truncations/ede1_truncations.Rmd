@@ -1,0 +1,264 @@
+---
+title: "Percentage of nuage-forming cells in 3∆ background Ede1 truncation mutants"
+date: "Last compiled on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE,
+                      dpi = 96)
+```
+
+```{r libs}
+library(tidyverse)
+library(Hmisc) # mean_sdl and binomial confs
+library(ggbeeswarm)
+```
+
+# {.tabset}
+
+## Experiment
+
+### Rationale
+
+I want to quantify the nuage-forming tendencies
+of each Ede1 truncation construct,
+in two yeast cell backgrounds (wild-type and *apl3∆ yap1801∆ yap1802∆*)
+Absent a more finely tuned method, 
+I have counted the percentage of condensate-containing cells
+(by subjective but blinded assessment).
+
+### Method
+
+I acquired all data on the Olympus IX81
+equipped with a 100x/1.49 objective, 
+using the X-Cite 120PC lamp at 50% intensity 
+and 400 ms exposure for illumination. 
+Light was filtered through a U-MGFPHQ filter cube. 
+I acquired stacks of 26 planes with a step size of 0.2 microns.
+
+Individual cells were cropped out of fields of view
+based only on the bright field channel.
+I used the ImageJ macro `blindAnalysis` 
+to sequentially display all images
+at random, blinding me to the strain of origin,
+and recording a binary decision about condensate formation
+for each image.
+
+### Strain list
+
+```{r strains}
+strains <- read_csv("data/input/strain_lut.csv", 
+                    col_types = cols(bg = col_factor(NULL), Ede1 = col_factor(NULL))) # order factor levels in csv file
+knitr::kable(strains)
+```
+
+```{r source_data}
+# initialize a data frame with counts and get information about experiment from file names
+files <- list.files(path = 'data/input/', pattern = 'dataset',
+                    full.names = TRUE)
+
+counts <- map(files, read_csv,
+              col_names = c('cell', 'nuages', 'dataset'),
+              cols(dataset = col_factor(NULL))) %>%
+          bind_rows() %>%
+          # separate filename into variables
+          separate(cell, c('date', 'strain',
+                           'stack', 'channel', 'cell'), '_') %>%
+          left_join(strains, by = 'strain') %>%
+          select(strain, stack, cell, Ede1, nuages, bg, dataset)
+
+write_excel_csv(format.data.frame(counts, digits = 3), 'data/truncation_data.csv')
+save(counts, file = 'data/truncation_data.RData')
+rm(list = ls()) # clean workspace
+```
+
+```{r load}
+load('data/truncation_data.RData')
+```
+
+## Data summary {.tabset}
+
+### Individual datasets
+
+Percentage of cells with condensates for each Ede1 construct in each background, by dataset.
+
+x: number of cells with condensates, n: total number of analyzed condensates, p: x / n, p_min and p_max: estimates of binomial confidence interval based on sample size, by Wilson's method.
+
+```{r}
+proc <- counts %>%
+  group_by(bg, Ede1, dataset) %>%
+  summarise(x = sum(nuages), n = n(),
+            p = binconf(x, n, method = 'wilson')[1],
+            p_min = binconf(x, n, method = 'wilson')[2],
+            p_max = binconf(x, n, method = 'wilson')[3])
+
+knitr::kable(proc)
+write_excel_csv(format.data.frame(proc, digits = 3), 'data/truncation_summary.csv')
+```
+
+### Averaged datasets {.active}
+
+```{r averaged_datasets}
+proc_stats <- proc %>%
+  select(bg, Ede1, dataset, p) %>%
+  group_by(bg, Ede1) %>%
+  summarise(mean = mean(p), sd = sd(p), n = n())
+
+knitr::kable(proc_stats)
+```
+
+## Plots {.tabset}
+
+```{r}
+theme_frap <- function(base_size = 11, base_family = "",
+                       base_line_size = base_size / 22,
+                       base_rect_size = base_size / 22) {
+  # minimal theme with border
+  # based on theme_linedraw without the grid lines
+  # also trying to remove all backgrounds but plot_background won't set to blank
+  theme_linedraw(
+    base_size = base_size,
+    base_family = base_family,
+    base_line_size = base_line_size,
+    base_rect_size = base_rect_size
+  ) %+replace%
+    theme(
+      # no grid and no backgrounds if I can help it
+      plot.background = element_blank(),
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      
+      complete = TRUE
+    )
+}
+```
+
+### Lineplot
+
+This is a difficult plot because of the number of variables involved: Ede1 truncation, strain background & dataset. First all on one plot, and means as thick lines.
+
+```{r}
+plot <- ggplot(proc, aes(x = Ede1, y = p, group = bg, fill = bg)) + 
+  #geom_bar(stat = "identity", position = 'dodge', width = 0.5, colour = 'black')+
+  #scale_fill_grey(start = 1, end = 0.5)+
+  #geom_errorbar(aes(ymin = p_min, ymax = p_max), position = position_dodge(width = 0.5), width = 0.2) +
+  stat_summary(fun.y = mean, geom = "errorbar",
+               position = position_dodge( width = 0.7),
+               aes(ymax = ..y.., ymin = ..y..),
+               width = 0.5, size = 1)+
+  stat_summary(fun.data = 'mean_sdl', geom = 'errorbar',
+               position = position_dodge(width = 0.7),
+               fun.args = list(mult = 1), width = 0.2)+
+  geom_point(#aes(shape = dataset),
+             shape = 21,
+             position = position_jitterdodge(),
+             size = 2, width = 0.3)+
+  scale_color_brewer(palette = 'Set2')+
+  scale_shape_manual(values = c(21:25))+
+  theme_frap(base_size = 16, base_family = "Myriad Pro")+
+  scale_y_continuous(labels = scales::label_percent(suffix = ''))+
+  theme(legend.position = c(0.9, 0.5),
+        legend.background = element_rect(fill = NULL, colour = 'black',
+                                         size = 0.5))+
+  #theme(legend.position = "none")+
+  #geom_text(aes(label = scales::percent(proc)), stat= "identity", vjust = -0.5) +
+  #geom_text(aes(label = total), stat= "identity", vjust = -0.5, hjust = 'middle', position = position_dodge(width = .5)) +
+  #facet_grid(rows = vars(bg))+
+  labs(title = NULL,
+       y = 'Cells with condensates (%)')
+
+print(plot)
+ggsave('figures/nuages.pdf', device = cairo_pdf, width = 160, height = 120, unit = 'mm')
+```
+
+### Bar graph {.active}
+
+The lines here do not provide enough visual cues as to which mean and point belongs to which combination of groups. As disliked as bar graphs are, I think in this case they would be much better suited to guide the reader.
+
+```{r}
+plot <- ggplot(proc, aes(x = Ede1, y = p, group = bg, fill = bg)) + 
+
+  stat_summary(fun.y = mean, geom = "bar",
+               position = position_dodge(),
+               width = 0.5, colour = 'black')+
+  stat_summary(fun.data = 'mean_sdl', geom = 'errorbar',
+               position = position_dodge(width = 0.5),
+               fun.args = list(mult = 1), width = 0.3)+
+  geom_point(aes(shape = dataset),
+             position = position_jitterdodge(jitter.width = 0.4, 
+                                             dodge.width = 0.5),
+             size = 2, show.legend = FALSE)+
+  scale_color_brewer(palette = 'Set2')+
+  scale_fill_grey(start = 1, end = 0.5)+
+  scale_shape_manual(values = c(21:25))+
+  theme_frap(base_size = 16, base_family = "Myriad Pro")+
+  scale_y_continuous(labels = scales::label_percent(suffix = ''))+
+  theme(legend.position = c(0.5, 0.95),
+        legend.justification = c("center", "top"),
+        #legend.box.just = "right",
+        legend.margin = margin(0, 6, 6, 6),
+        legend.background = element_rect(fill = NULL, colour = 'black',
+                                         size = 0.5),
+        legend.title = element_blank())+
+  labs(title = NULL,
+       y = 'Cells with condensates (%)')
+
+print(plot)
+ggsave('figures/nuages_bar.pdf', device = cairo_pdf, width = 160, height = 120, unit = 'mm')
+```
+
+### Faceted line plot
+
+Finally, for the easily confused (by multiple groupings) and the easily offended (by bar graphs), go back to lines but facet the two backgrounds.
+
+```{r}
+plot <- ggplot(proc, aes(x = Ede1, y = p, group = bg, fill = bg)) + 
+  stat_summary(fun.y = mean, geom = "errorbar",
+               aes(ymax = ..y.., ymin = ..y..),
+               width = 0.5, size = 1)+
+  stat_summary(fun.data = 'mean_sdl', geom = 'errorbar',
+               fun.args = list(mult = 1), width = 0.2)+
+  geom_point(aes(shape = dataset, fill = dataset),
+             position = position_jitter(width = 0.1),
+             size = 2, show.legend = FALSE)+
+  scale_color_brewer(palette = 'Set2')+
+  scale_fill_grey(start = 1, end = 0.5)+
+  scale_shape_manual(values = c(21:25))+
+  theme_frap(base_size = 16, base_family = "Myriad Pro")+
+  scale_y_continuous(labels = scales::label_percent(suffix = ''))+
+  theme(legend.position = 'right',
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = -45, vjust = 0.1, hjust = 0.1))+
+  # rotating axis labels: will be available when I update ggplot
+  # I don't want to do it yet though as the potential fuckups are countless
+  # guides(x =  guide_axis(angle = 90))+
+  facet_grid(rows = vars(bg))+
+  labs(title = NULL,
+       y = 'Cells with condensates (%)')
+
+print(plot)
+ggsave('figures/nuages_facet.pdf', device = cairo_pdf, width = 120, height = 120, unit = 'mm')
+```
+
+## Source data
+
+### .csv
+
+```{r embed_csv}
+xfun::embed_file('data/truncation_data.csv')
+```
+
+### .RData
+
+```{r embed_rdata}
+xfun::embed_file('data/truncation_data.RData')
+```
+
+## Session info
+
+```{r session, message=TRUE}
+sessionInfo()
+```

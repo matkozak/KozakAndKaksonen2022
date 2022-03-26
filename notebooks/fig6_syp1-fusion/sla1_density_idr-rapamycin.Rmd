@@ -1,0 +1,389 @@
+---
+title: "Sla1 patch density in Ede1∆PQCC-Syp1 fusion"
+date: "Last compiled on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE,
+                      dpi = 96, fig.width = 4, fig.height = 3)
+```
+
+```{r libs}
+library(tidyverse) 
+library(broom) # to summarise significance tests in a tidy manner
+library(ggbeeswarm) # beeswarm scatter plots
+library(ggsignif) # significance on plots
+library(knitr)
+library(rstatix)
+```
+
+```{r load}
+rm(list = ls())
+load("data/syp1_fusion_sla1.RData")
+```
+
+```{r theme}
+# Custom ggplot2 theme
+# --------------------
+
+# minimal theme with border
+# based on theme_linedraw without the grid lines
+# also trying to remove all backgrounds and margins
+# the aim is to make it as easy as possible to edit in illustrator
+
+theme_clean <- function(base_size = 11, base_family = "",
+                        base_line_size = base_size / 22,
+                        base_rect_size = base_size / 22) {
+  theme_linedraw(
+    base_size = base_size,
+    base_family = base_family,
+    base_line_size = base_line_size,
+    base_rect_size = base_rect_size
+  ) %+replace%
+    theme(
+      # no grid and no backgrounds if I can help it
+      legend.background =  element_blank(),
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      plot.background = element_blank(),
+      plot.margin = margin(0, 0, 0, 0),
+      complete = TRUE
+    )
+}
+
+# Set default theme
+# -----------------
+theme_set(theme_clean(base_size = 14, base_family = "Myriad Pro"))
+
+# Create a ggsave wrapper
+# -----------------------
+
+# This way we can set a default size and device for all plots
+my_ggsave <- function(filename, plot = last_plot(),
+                      device = cairo_pdf, units = "mm",
+                      width = 100, height = 80, ...){
+  ggsave(filename = filename, plot = plot,
+         device = device, units = units,
+         height = height, width = width,  ...)
+  }
+```
+
+# {.tabset .tabset-pills}
+
+## Experiment
+
+The aim of the experiment is to determine Sla1 patch density where the central region deletion (PQ-rich and coiled-coil) of Ede1 is attached to Syp1
+using the FRB-FKBP system.
+
+### Imaging
+
+All images were captured with the halide lamp @ 50% power
+using the GFP filter cube and 400 ms exposure per slice.
+5 micron stacks were taken with 0.2 micron step.
+
+### List of strains used
+
+Strain | Mutations
+--- | ---
+MKY0140 | wild type
+MKY0654 | ede1∆
+MKY4343 | Ede1∆(366-900)-mCherry-FKBP, SYP1-FRB, fpr1∆, tor1-1
+
+All: Sla1-EGFP
+
+MKY4343 was cultured with 10 ug/ml rapamycin (+R) or equivalent volume of solvent
+(1% DMSO in culture, -R).
+
+### Image processing
+
+Patch numbers were extracted with a custom Python script `site_counter.py` 
+(part of package impromptu called `mkimage`)
+using functions from the `scikit-image` package. 
+Briefly, the images were median-filter subtracted with a 5 px disk brush
+and thresholded using the Yen method.
+The thresholded image was eroded using the number of non-zero
+neighbouring pixels in 3D as the erosion criterion.
+The spots were counted using skimage.measure.label() function with 2-connectivity.
+
+Cross-section area was obtained by median-filtering of the stack
+with 10px disk brush, calculating the maximum projection image, 
+thresholding using Otsu's algorithm and using skimage.measure.regionprops()
+to obtain area.
+Note that these are pixel counts of *cross-section* area. 
+To determine the total surface area, I assume that an unbudded cell is spherical
+(suface area is four times the cross-section area).
+
+This call to `site_counter` was used to process all datasets:
+
+```
+process_folder(path, median_radius = 5, erosion_n = 1, con = 2,
+                   method = Yen, mask = False, loop = False, save_images = True)
+```
+
+`data_cleanup.Rmd` was used to gather all output into tidy data frames
+with no further modifications.
+
+## Statistical summary {.tabset}
+
+### Sla1 density
+
+#### Per dataset
+
+We measured the number of patches and cell surface area.
+We can combine these these as $density = \frac{patches}{area}$,
+calculated for each cell individually.
+
+Data summary for each Ede1 mutant in each dataset:
+
+```{r density}
+sla1_density_stats <- sla1_density %>%
+  group_by(ede1, dataset) %>%
+  summarise(n = n(),
+            across(density,
+                   list(mean = mean, sd = sd, median = median, mad = mad,
+                        shapiro.p = ~ tidy(shapiro.test(.x))$p.value)),
+            .groups = 'drop')
+
+sla1_density_stats %>% kable()
+```
+
+#### For all repeats
+
+Summary statistics for all experiments, derived from *mean values*
+of N independent repeats.
+
+```{r}
+sla1_density_stats %>%
+  group_by(ede1)%>%
+  summarise(N = n(),
+            across(density_mean,
+                   list(mean = mean, sd = sd, median = median, mad = mad),
+                        #shapiro.p = ~ tidy(shapiro.test(.x))$p.value),
+                       .names = '{.fn}'),
+            .groups = 'drop') %>%
+  kable()
+```
+
+### Hypothesis testing
+
+#### Are the Ede1 groups significantly different?
+
+We will use a linear model of `density_mean ~ ede1`
+to perform an ANOVA test on replicate-level means, 
+followed by a Tukey test for multiple comparisons.
+
+```{r}
+anova <- anova_test(sla1_density_stats, density_mean ~ ede1)
+
+anova %>%
+  kable()
+```
+
+One-way ANOVA rejects the null, followed by Tukey's range test:
+
+```{r}
+tukey <- tukey_hsd(sla1_density_stats, density_mean ~ ede1,
+                   ordered = TRUE)
+
+tukey %>%
+  kable()
+```
+
+The differences between DMSO control and rapamycin treatment
+are not significantly different.
+
+## Plots {.tabset}
+
+```{r density_scatter}
+plot_blank <- ggplot(sla1_density_stats,
+                     aes(x = ede1, y = density_mean))+
+  labs(title = NULL, x = NULL, y = expression("Sla1 patches/µm"^2))+
+  scale_y_continuous(breaks = seq(0.0, 1.0, 0.1))+
+  scale_shape_manual(values = c(21:25))+
+  scale_color_brewer(palette = 'Pastel2')+
+  scale_fill_brewer(palette = 'Set2')
+
+plot_scatter <- plot_blank + 
+  geom_quasirandom(data = sla1_density,
+                   aes(x = ede1, y = density,
+                     shape = dataset, #colour = dataset
+                     ),
+                 colour = 'grey75',
+                 show.legend = F, size = 0.8
+                 )
+
+plot_violin <- plot_blank + 
+  geom_violin(inherit.aes = F,
+              data = sla1_density, aes(x = ede1, y = density),
+              colour = 'grey70', fill = 'transparent'
+              )
+```
+
+### SuperPlots
+
+```{r}
+plot_super <- plot_scatter +
+  geom_quasirandom(aes(shape = dataset, fill = dataset),
+                   show.legend = F,
+                   width = 0.3, size = 2)+
+  stat_summary(fun = mean, geom = 'crossbar',
+               width = 0.5, fatten = 1)+
+  stat_summary(fun.data = 'mean_sdl',
+               fun.args = list(mult = 1), 
+               geom = 'errorbar',
+               width = 0.2)
+  
+print(plot_super)
+my_ggsave('figures/density_super.pdf')
+
+plot_super_violin <- plot_violin +
+  geom_quasirandom(aes(shape = dataset, fill = dataset),
+                   show.legend = F,
+                   width = 0.3, size = 2)+
+  stat_summary(fun = mean, geom = 'crossbar',
+               width = 0.5, fatten = 1)+
+  stat_summary(fun.data = 'mean_sdl',
+               fun.args = list(mult = 1), 
+               geom = 'errorbar',
+               width = 0.2)
+
+print(plot_super_violin)
+my_ggsave('figures/density_super_violin.pdf')
+```
+
+### SuperPlots with significance
+
+Let's add significance stars based on Tukey's test.
+
+```{r}
+extract_comparisons <- function(x, rows){
+  #' Extract comparisons from rstatix tidy tests
+  #' 
+  #' This function subsets the selected comparisons in a Tukey,
+  #' Dunn or similar test done by rstatix.
+  #' It converts groups to a list of vectors that can be passed to geom_signif
+  #'
+  #'
+  #' @param x: df or tibble, the comparison results
+  #' @param rows: integer vector, the rows with desired comparisons
+  x_subset <- x[rows,] %>%
+    .[nrow(.):1,]
+  
+  x_comparisons <- x_subset %>%
+    select(group1, group2) %>%
+    t() %>%
+    as.data.frame() %>%
+    as.list
+  x_annotations <- x_subset$p.adj.signif %>%
+    as.vector()
+  
+  significance <- list(
+    comparisons = x_comparisons,
+    annotations = x_annotations
+  )
+  
+  return(significance)
+}
+```
+
+```{r}
+significance <- extract_comparisons(tukey, c(1:6))
+
+plot_super_signif <- plot_super +
+  geom_signif(comparisons = significance$comparisons,
+              annotations = significance$annotations,
+              step_increase = 0.03,
+              tip_length = 0.01, vjust = 0.8,
+              margin_top = -0.1)
+print(plot_super_signif)
+my_ggsave('figures/density_super_signif.pdf')
+```
+
+#### Letter annotations
+
+In this view, groups sharing at least one letter are not significant
+at a chosen $\alpha$ (here, 5%).
+
+Pros:
+
+  * less cluttered
+  * simpler to read and edit
+
+Cons:
+
+  * cannot distinguish different confidence levels
+  * focus on non-findings
+
+```{r}
+library(multcompView)
+
+add_tukey_labels <- function(x, yvar, xvar, alpha = 0.95){
+  #' Add letter group labels generated by Tukey's HSD
+  #'
+  #' This function performs ANOVA and Tukey's HSD,
+  #' extracts the letter labels and attaches them
+  #' to the original data.
+  #'
+  #' @param x: df or tibble, the data (long format!)
+  #' @param yvar: chr, name of the dependent variable
+  #' @param xvar: chr, name of the independent variable
+  #' @param alpha: dbl, confidence level passed on to Tukey's test
+  #'
+  aov_form <- formula(paste(yvar, '~', xvar))
+  anova <- aov(formula = aov_form, data = x)
+  tukey <- TukeyHSD(anova, which = xvar, conf.level = alpha)
+  # Extract labels and factor levels from Tukey post-hoc 
+  x_labels <- as_tibble(
+    multcompLetters4(anova, tukey)[[xvar]]$Letters,
+    rownames = xvar
+    )
+  x_labels <- rename(x_labels, tukey_group = value)
+  x <- left_join(x, x_labels, by = xvar)
+  
+  return(x)
+  }
+``` 
+
+```{r}
+sla1_density_stats <- sla1_density_stats %>%
+  mutate(ede1 = recode_factor(ede1, '-R' = 'noR', '+R' = 'R')) %>%
+  add_tukey_labels('density_mean', 'ede1') %>%
+  mutate(ede1 = recode_factor(ede1, 'noR' = '-R', 'R' = '+R'))
+```
+
+```{r}
+plot_super_letters <- plot_super +
+  geom_text(data = sla1_density_stats,
+            aes(label = tukey_group), y = Inf, vjust = 1.2)
+  #stat_summary(aes(label = tukey_group),
+  #             fun.y = Inf,
+  #             geom = 'text', na.rm = T, vjust = -0.5,
+  #             #fun.args = list(err = errors, mult = error_range)
+  #             )
+print(plot_super_letters)
+my_ggsave('figures/density_super_letters.pdf')
+```
+
+
+## Source data
+
+### .csv
+
+```{r echo=FALSE}
+xfun::embed_file('data/syp1_fusion_sla1.csv')
+```
+
+### .RData
+
+```{r echo=FALSE}
+xfun::embed_file('data/syp1_fusion_sla1.RData')
+```
+
+## Session info
+
+```{r session, message=TRUE}
+sessionInfo()
+```

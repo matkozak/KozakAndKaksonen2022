@@ -1,0 +1,187 @@
+---
+title: "Influence of Ede1 copy number on condensate formation in 3∆ diploid yeast"
+date: "Last compiled on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE,
+                      dpi = 96, fig.width = 6, fig.height = 4)
+```
+
+```{r libs}
+library(tidyverse)
+library(Hmisc) # mean_sdl and binomial confs
+library(ggbeeswarm)
+```
+
+# {.tabset .tabset-pills}
+
+## Experiment
+
+The aim of this experiment was to quickly verify
+whether the formation of Ede1 condensates
+in living yeast cells
+depends on Ede1 concentration.
+
+I made three diploid strains homozygous for the
+*apl3∆ yap1801∆ yap1802∆* triple adaptor deletion,
+and differing in Ede1-EGFP copy number:
+*EDE1-EGFP/EDE1/EGFP*, *EDE1-EGFP/EDE1*, *EDE1-EFGP/ede1∆*.
+
+I took 5-micron z-stacks and manually cropped out single cells
+using the brightfield channel as a reference to not bias the count.
+A subjective, but blinded assessment was done 
+for the presence / absence of condensates.
+ImageJ macro `blindAnalysis` was used 
+to display all cells in random order
+and with hidden strain information,
+and to record the binary assessment.
+
+### Strain list
+
+```{r strains}
+strains <- read_csv("data/raw/strain_lut.csv", 
+                    col_types = cols(second_ede1  = col_factor(NULL))) # order factor levels in csv file
+knitr::kable(strains)
+```
+
+## Results {.tabset}
+
+```{r source_data}
+# initialize a data frame with counts and get information about experiment from file names
+files <- list.files(path = 'data/raw/', pattern = 'dataset',
+                    full.names = TRUE)
+
+counts <- map(files, read_csv,
+              col_names = c('cell', 'condensates', 'dataset'),
+              cols(dataset = col_factor(NULL))) %>%
+          bind_rows() %>%
+          separate(cell, c('date', 'strain', 'stack', 'cell',
+                   'channel'), '_') %>%
+          left_join(strains, by = 'strain') %>%
+          select(strain, stack, second_ede1, condensates, dataset)
+
+write_excel_csv(format.data.frame(counts, digits = 3), 'data/diploid_data.csv')
+save(counts, file = 'data/diploid_data.RData')
+rm(list = ls()) # clean workspace
+```
+
+```{r load}
+load('data/diploid_data.RData')
+```
+
+### Individual datasets
+
+Percentage of cells with condensates 
+for each EDE1-EGFP / second Ede1 allele combination,
+by dataset.
+
+x: number of cells with condensates, 
+n: total number of analyzed condensates, 
+p: x / n, 
+p_min and p_max: estimates of binomial confidence interval 
+based on sample size, by Wilson's method.
+
+```{r individual_datasets}
+proc <- counts %>%
+  group_by(second_ede1, dataset) %>%
+  summarise(x = sum(condensates), n = n(),
+            p = binconf(x, n, method = 'wilson')[1],
+            p_min = binconf(x, n, method = 'wilson')[2],
+            p_max = binconf(x, n, method = 'wilson')[3])
+
+proc_stats <- proc %>%
+  select(second_ede1, dataset, p) %>%
+  group_by(second_ede1) %>%
+  summarise(mean = mean(p), sd = sd(p), n = n())
+
+knitr::kable(proc)
+write_excel_csv(format.data.frame(proc, digits = 3), 'data_summary.csv')
+```
+
+### Averaged datasets
+
+Percentage of cells bearing condensates for each
+EDE1-EGFP / second Ede1 allelecombination,
+arithmetic mean ± SD from 3 datasets.
+
+```{r averaged}
+proc_stats <- proc %>%
+  select(second_ede1, dataset, p) %>%
+  group_by(second_ede1) %>%
+  summarise(mean = mean(p), sd = sd(p), n = n())
+
+knitr::kable(proc_stats)
+```
+
+### Plot {.active}
+
+```{r plot}
+theme_frap <- function(base_size = 11, base_family = "",
+                       base_line_size = base_size / 22,
+                       base_rect_size = base_size / 22) {
+  # minimal theme with border
+  # based on theme_linedraw without the grid lines
+  # also trying to remove all backgrounds but plot_background won't set to blank
+  theme_linedraw(
+    base_size = base_size,
+    base_family = base_family,
+    base_line_size = base_line_size,
+    base_rect_size = base_rect_size
+  ) %+replace%
+    theme(
+      # no grid and no backgrounds if I can help it
+      plot.background = element_blank(),
+      panel.background = element_blank(),
+      panel.grid = element_blank(),
+      plot.margin = margin(0, 0, 0, 0),
+      complete = TRUE
+    )
+}
+
+myplot <- proc %>% ggplot(aes(x = second_ede1, y = p)) + 
+  geom_quasirandom(aes(shape = dataset), fill = 'gray80',
+              size = 2, width = 0.3, show.legend = FALSE)+
+  stat_summary(fun.y = mean, geom = "errorbar", 
+               aes(ymax = ..y.., ymin = ..y..),
+               width = 0.5, size = 1)+
+  stat_summary(fun.data = 'mean_sdl', geom = 'errorbar',
+               fun.args = list(mult = 1), width = 0.2)+
+  #scale_color_brewer(palette = 'Set2')+
+  scale_shape_manual(values = c(21:25))+
+  theme_frap(base_size = 18, base_family = "Myriad Pro")+
+  scale_y_continuous(labels = scales::label_percent(suffix = ''))+
+  theme(legend.position = c(0.95, 0.95),
+        legend.justification = c("right", "top"),
+        legend.background = element_rect(fill = NULL, colour = 'black',
+                                         size = 0.5))+
+  labs(title = NULL,
+       y = 'Cells with condensates (%)',
+       x = 'Second Ede1 allele')
+
+print(myplot)
+ggsave('figures/diploids.pdf', device = cairo_pdf, width = 80, height = 120, units = "mm")
+```
+
+## Source data
+
+### .csv
+
+```{r echo=FALSE}
+xfun::embed_file('data/diploid_data.csv')
+```
+
+### .RData
+
+```{r echo=FALSE}
+xfun::embed_file('data/diploid_data.RData')
+```
+
+## Session info
+
+```{r session, message=TRUE}
+sessionInfo()
+```
