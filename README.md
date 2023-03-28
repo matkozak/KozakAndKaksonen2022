@@ -1,7 +1,7 @@
 # KozakAndKaksonen2022
 
-This repository holds all the code used in the article *Condensation of Ede1
-promotes the initiation of endocytosis*. 
+This repository holds all the code used in the article
+[*Condensation of Ede1 promotes the initiation of endocytosis*](https://elifesciences.org/articles/72865). 
 
 `notebooks` holds data files and R code used to generate all plots.
 
@@ -13,7 +13,5 @@ the time of publication.
 and several quantifications, for example extraction of intensities for FRAP
 analysis or recording subjective assessments on blinded images.
 
-`frapr` is a set of scripts I used to load, average, normalize and fit FRAP
-data. This code is pretty old and not very pretty; I plan on publishing
-a refactored version, but this is what went into the paper.
-
+`frapr` is a set of R scripts I used to load, average, normalize and fit FRAP
+data.
